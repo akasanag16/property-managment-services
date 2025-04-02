@@ -1,0 +1,19 @@
+{
+  "name": "property-maintenance-application",
+  "version": "1.0.0",
+  "description": "Property Maintenance Application with backend and frontend",
+  "scripts": {
+    "install-backend": "cd backend && npm install",
+    "start": "cd backend && npm start",
+    "dev": "cd backend && npm run dev",
+    "test": "cd backend && npm test"
+  },
+  "author": "",
+  "license": "ISC",
+  "engines": {
+    "node": ">=14.0.0"
+  },
+  "dependencies": {
+    "socket.io": "^4.8.1"
+  }
+}
