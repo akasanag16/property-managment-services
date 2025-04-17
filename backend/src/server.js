@@ -5,13 +5,6 @@ const dotenv = require('dotenv');
 const errorHandler = require('./middleware/errorHandler');
 const connectDB = require('./config/database');
 
-// Import routes
-const authRoutes = require('./routes/authRoutes');
-const apartmentRoutes = require('./routes/apartmentRoutes');
-const maintenanceRoutes = require('./routes/maintenanceRoutes');
-const rentRoutes = require('./routes/rentRoutes');
-const notificationsRouter = require('./routes/notifications');
-
 // Load environment variables
 dotenv.config();
 
@@ -22,7 +15,7 @@ const app = express();
 const allowedOrigins = [
   'http://localhost:5173',
   'https://property-managment-services.vercel.app',
-  'https://property-managment-services-6bh8tufza.vercel.app',
+  'https://property-managment-services-ku4pwapr5.vercel.app',
   'https://property-managment-services-git-main-akasanag-gitamins-projects.vercel.app',
   process.env.FRONTEND_URL
 ].filter(Boolean);
@@ -49,26 +42,83 @@ app.options('*', cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// Initialize MongoDB connection
+let isConnected = false;
+
+const initializeMongoDB = async () => {
+  if (isConnected) {
+    console.log('Using existing database connection');
+    return;
+  }
+
+  try {
+    await mongoose.connect(process.env.MONGODB_URI, {
+      useNewUrlParser: true,
+      useUnifiedTopology: true,
+      serverSelectionTimeoutMS: 5000,
+      socketTimeoutMS: 45000,
+    });
+    isConnected = true;
+    console.log('Database connected');
+  } catch (error) {
+    console.error('Database connection error:', error);
+    throw error;
+  }
+};
+
 // Health check route
-app.get('/api/health', (req, res) => {
-  res.status(200).json({ 
-    status: 'OK', 
-    timestamp: new Date(),
-    environment: process.env.NODE_ENV,
-    database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected'
-  });
+app.get('/api/health', async (req, res) => {
+  try {
+    await initializeMongoDB();
+    res.status(200).json({ 
+      status: 'OK', 
+      timestamp: new Date(),
+      environment: process.env.NODE_ENV,
+      database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected'
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      status: 'ERROR',
+      error: error.message
+    });
+  }
 });
 
-// Routes
-app.use('/api/auth', authRoutes);
-app.use('/api/apartments', apartmentRoutes);
-app.use('/api/maintenance', maintenanceRoutes);
-app.use('/api/rent', rentRoutes);
-app.use('/api/notifications', notificationsRouter);
+// Import routes
+const authRoutes = require('./routes/authRoutes');
+const apartmentRoutes = require('./routes/apartmentRoutes');
+const maintenanceRoutes = require('./routes/maintenanceRoutes');
+const rentRoutes = require('./routes/rentRoutes');
+const notificationsRouter = require('./routes/notifications');
+
+// Routes with database connection
+const withDB = (handler) => {
+  return async (req, res, next) => {
+    try {
+      await initializeMongoDB();
+      return handler(req, res, next);
+    } catch (error) {
+      console.error('Route error:', error);
+      return res.status(500).json({ error: 'Internal Server Error', details: error.message });
+    }
+  };
+};
+
+// Apply routes with database connection
+app.use('/api/auth', (req, res, next) => withDB(authRoutes)(req, res, next));
+app.use('/api/apartments', (req, res, next) => withDB(apartmentRoutes)(req, res, next));
+app.use('/api/maintenance', (req, res, next) => withDB(maintenanceRoutes)(req, res, next));
+app.use('/api/rent', (req, res, next) => withDB(rentRoutes)(req, res, next));
+app.use('/api/notifications', (req, res, next) => withDB(notificationsRouter)(req, res, next));
 
 // Basic route for testing
-app.get('/api', (req, res) => {
-  res.json({ message: 'Welcome to Property Maintenance API' });
+app.get('/api', async (req, res) => {
+  try {
+    await initializeMongoDB();
+    res.json({ message: 'Welcome to Property Maintenance API', status: 'Connected' });
+  } catch (error) {
+    res.status(500).json({ message: 'API Error', error: error.message });
+  }
 });
 
 // 404 handler
@@ -79,33 +129,5 @@ app.use((req, res) => {
 // Error handling middleware
 app.use(errorHandler);
 
-// Start server
-const PORT = process.env.PORT || 5000;
-
-const startServer = async () => {
-  try {
-    // Connect to MongoDB
-    await connectDB();
-
-    app.listen(PORT, () => {
-      console.log(`Server is running on port ${PORT}`);
-    });
-  } catch (err) {
-    console.error('Failed to start server:', err);
-    process.exit(1);
-  }
-};
-
-// Handle uncaught exceptions
-process.on('uncaughtException', (err) => {
-  console.error('Uncaught Exception:', err);
-  process.exit(1);
-});
-
-// Handle unhandled promise rejections
-process.on('unhandledRejection', (err) => {
-  console.error('Unhandled Rejection:', err);
-  process.exit(1);
-});
-
-startServer(); 
+// Export the app for serverless use
+module.exports = app; 
