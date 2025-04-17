@@ -2,6 +2,8 @@ const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const dotenv = require('dotenv');
+const errorHandler = require('./middleware/errorHandler');
+const connectDB = require('./config/database');
 
 // Import routes
 const authRoutes = require('./routes/authRoutes');
@@ -17,55 +19,85 @@ dotenv.config();
 const app = express();
 
 // Middleware
+const allowedOrigins = [
+  'http://localhost:5173',
+  'https://property-managment-services.vercel.app',
+  process.env.FRONTEND_URL
+].filter(Boolean);
+
 app.use(cors({
-  origin: 'http://localhost:5173',
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// MongoDB Connection
+// Health check route
+app.get('/health', (req, res) => {
+  res.status(200).json({ 
+    status: 'OK', 
+    timestamp: new Date(),
+    environment: process.env.NODE_ENV,
+    database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected'
+  });
+});
+
+// Routes
+app.use('/api/auth', authRoutes);
+app.use('/api/apartments', apartmentRoutes);
+app.use('/api/maintenance', maintenanceRoutes);
+app.use('/api/rent', rentRoutes);
+app.use('/api/notifications', notificationsRouter);
+
+// Basic route for testing
+app.get('/', (req, res) => {
+  res.json({ message: 'Welcome to Property Maintenance API' });
+});
+
+// 404 handler
+app.use((req, res) => {
+  res.status(404).json({ message: 'Route not found' });
+});
+
+// Error handling middleware
+app.use(errorHandler);
+
+// Start server
 const PORT = process.env.PORT || 5000;
 
 const startServer = async () => {
   try {
-    await mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/property-maintenance');
-    console.log('Connected to MongoDB');
-
-    // Routes
-    app.use('/api/auth', authRoutes);
-    app.use('/api/apartments', apartmentRoutes);
-    app.use('/api/maintenance', maintenanceRoutes);
-    app.use('/api/rent', rentRoutes);
-    app.use('/api/notifications', notificationsRouter);
-
-    // Basic route for testing
-    app.get('/', (req, res) => {
-      res.json({ message: 'Welcome to Property Maintenance API' });
-    });
-
-    // Error handling middleware
-    app.use((err, req, res, next) => {
-      console.error(err.stack);
-      res.status(500).json({ message: 'Something went wrong!' });
-    });
+    // Connect to MongoDB
+    await connectDB();
 
     app.listen(PORT, () => {
       console.log(`Server is running on port ${PORT}`);
-    }).on('error', (err) => {
-      if (err.code === 'EADDRINUSE') {
-        console.log(`Port ${PORT} is busy, trying port ${PORT + 1}`);
-        app.listen(PORT + 1);
-      } else {
-        console.error('Server error:', err);
-      }
     });
   } catch (err) {
-    console.error('Failed to connect to MongoDB:', err);
+    console.error('Failed to start server:', err);
     process.exit(1);
   }
 };
+
+// Handle uncaught exceptions
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught Exception:', err);
+  process.exit(1);
+});
+
+// Handle unhandled promise rejections
+process.on('unhandledRejection', (err) => {
+  console.error('Unhandled Rejection:', err);
+  process.exit(1);
+});
 
 startServer(); 

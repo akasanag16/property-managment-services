@@ -4,70 +4,66 @@ const bcrypt = require('bcryptjs');
 const userSchema = new mongoose.Schema({
   name: {
     type: String,
-    required: true,
-    trim: true
+    required: [true, 'Name is required'],
+    trim: true,
+    minlength: [2, 'Name must be at least 2 characters long'],
+    maxlength: [50, 'Name cannot exceed 50 characters']
   },
   email: {
     type: String,
-    required: true,
+    required: [true, 'Email is required'],
     unique: true,
     trim: true,
-    lowercase: true
+    lowercase: true,
+    match: [/^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/, 'Please enter a valid email']
   },
   password: {
     type: String,
-    required: true
+    required: [true, 'Password is required'],
+    minlength: [6, 'Password must be at least 6 characters long'],
+    select: false
   },
-  phone: {
+  role: {
     type: String,
-    required: true,
-    trim: true
+    enum: {
+      values: ['tenant', 'landlord', 'admin'],
+      message: '{VALUE} is not a valid role'
+    },
+    default: 'tenant'
   },
-  userType: {
+  phoneNumber: {
     type: String,
-    required: true,
-    enum: ['owner', 'tenant', 'serviceProvider']
+    trim: true,
+    match: [/^\+?[\d\s-]{10,}$/, 'Please enter a valid phone number']
   },
-  companyName: {
-    type: String,
-    required: function() {
-      return this.userType === 'serviceProvider';
-    }
+  isVerified: {
+    type: Boolean,
+    default: false
   },
-  serviceTypes: {
-    type: [String],
-    required: function() {
-      return this.userType === 'serviceProvider';
-    }
-  },
-  deviceToken: String,
-  createdAt: {
-    type: Date,
-    default: Date.now
-  }
+  verificationToken: String,
+  verificationExpires: Date,
+  resetPasswordToken: String,
+  resetPasswordExpires: Date
+}, {
+  timestamps: true
 });
 
-// Hash password before saving
+// Pre-save middleware to hash password
 userSchema.pre('save', async function(next) {
   if (!this.isModified('password')) return next();
-  
-  try {
-    const salt = await bcrypt.genSalt(10);
-    this.password = await bcrypt.hash(this.password, salt);
-    next();
-  } catch (error) {
-    next(error);
-  }
+  this.password = await bcrypt.hash(this.password, 12);
+  next();
 });
 
-// Method to compare password
+// Method to check password
 userSchema.methods.comparePassword = async function(candidatePassword) {
-  try {
-    return await bcrypt.compare(candidatePassword, this.password);
-  } catch (error) {
-    throw error;
-  }
+  return await bcrypt.compare(candidatePassword, this.password);
 };
+
+// Create indexes
+userSchema.index({ email: 1 }, { unique: true });
+userSchema.index({ verificationToken: 1 }, { sparse: true });
+userSchema.index({ resetPasswordToken: 1 }, { sparse: true });
 
 const User = mongoose.model('User', userSchema);
 
