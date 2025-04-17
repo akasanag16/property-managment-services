@@ -38,19 +38,15 @@ import axios from 'axios';
 const Apartments = () => {
   const [apartments, setApartments] = useState([]);
   const [open, setOpen] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [formData, setFormData] = useState({
-    name: '',
-    address: '',
-    rent: '',
-    bedrooms: '',
-    bathrooms: '',
-    squareFeet: '',
-    description: '',
-    status: 'available',
-    imageUrl: 'https://source.unsplash.com/random/400x300/?apartment',
+    apartmentNumber: '',
+    location: '',
+    rentAmount: '',
+    rentDueDay: '1'
   });
+
   const theme = useTheme();
 
   useEffect(() => {
@@ -60,7 +56,12 @@ const Apartments = () => {
   const fetchApartments = async () => {
     try {
       setLoading(true);
-      const response = await axios.get('/api/apartments');
+      const token = localStorage.getItem('token');
+      const response = await axios.get('http://localhost:5000/api/apartments', {
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      });
       setApartments(response.data);
       setError('');
     } catch (err) {
@@ -72,40 +73,77 @@ const Apartments = () => {
   };
 
   const handleOpen = () => {
+    setError('');
     setOpen(true);
   };
 
   const handleClose = () => {
+    setError('');
     setOpen(false);
     setFormData({
-      name: '',
-      address: '',
-      rent: '',
-      bedrooms: '',
-      bathrooms: '',
-      squareFeet: '',
-      description: '',
-      status: 'available',
-      imageUrl: 'https://source.unsplash.com/random/400x300/?apartment',
+      apartmentNumber: '',
+      location: '',
+      rentAmount: '',
+      rentDueDay: '1'
     });
   };
 
   const handleChange = (e) => {
-    setFormData({
-      ...formData,
-      [e.target.name]: e.target.value,
-    });
+    const { name, value } = e.target;
+    setFormData(prev => ({
+      ...prev,
+      [name]: value
+    }));
+  };
+
+  const validateForm = () => {
+    if (!formData.apartmentNumber.trim()) {
+      setError('Apartment number is required');
+      return false;
+    }
+    if (!formData.location.trim()) {
+      setError('Location is required');
+      return false;
+    }
+    if (!formData.rentAmount || formData.rentAmount <= 0) {
+      setError('Valid rent amount is required');
+      return false;
+    }
+    if (!formData.rentDueDay || formData.rentDueDay < 1 || formData.rentDueDay > 31) {
+      setError('Rent due day must be between 1 and 31');
+      return false;
+    }
+    return true;
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (!validateForm()) return;
+
     try {
       setLoading(true);
-      await axios.post('/api/apartments', formData);
-      fetchApartments();
+      setError('');
+      
+      const token = localStorage.getItem('token');
+      const dataToSubmit = {
+        apartmentNumber: formData.apartmentNumber.trim(),
+        location: formData.location.trim(),
+        rentAmount: Number(formData.rentAmount),
+        rentDueDay: Number(formData.rentDueDay)
+      };
+
+      await axios.post('http://localhost:5000/api/apartments', dataToSubmit, {
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        }
+      });
+
+      await fetchApartments();
       handleClose();
     } catch (err) {
-      setError('Failed to add apartment. Please try again.');
+      const errorMessage = err.response?.data?.message || 'Failed to add apartment. Please try again.';
+      setError(errorMessage);
       console.error('Error adding apartment:', err);
     } finally {
       setLoading(false);
@@ -164,13 +202,81 @@ const Apartments = () => {
         </Button>
       </Box>
 
-      {error && (
-        <Alert severity="error" sx={{ mb: 3 }}>
-          {error}
-        </Alert>
-      )}
+      <Dialog open={open} onClose={handleClose} maxWidth="sm" fullWidth>
+        <DialogTitle>Add New Property</DialogTitle>
+        <DialogContent>
+          {error && (
+            <Alert severity="error" sx={{ mb: 2, mt: 1 }}>
+              {error}
+            </Alert>
+          )}
+          <Box component="form" onSubmit={handleSubmit} sx={{ mt: 2 }}>
+            <TextField
+              required
+              fullWidth
+              label="Apartment Number"
+              name="apartmentNumber"
+              value={formData.apartmentNumber}
+              onChange={handleChange}
+              margin="normal"
+              error={!!error && !formData.apartmentNumber}
+              helperText={!!error && !formData.apartmentNumber ? "Apartment number is required" : ""}
+            />
+            <TextField
+              required
+              fullWidth
+              label="Location"
+              name="location"
+              value={formData.location}
+              onChange={handleChange}
+              margin="normal"
+              error={!!error && !formData.location}
+              helperText={!!error && !formData.location ? "Location is required" : ""}
+            />
+            <TextField
+              required
+              fullWidth
+              label="Rent Amount"
+              name="rentAmount"
+              type="number"
+              value={formData.rentAmount}
+              onChange={handleChange}
+              margin="normal"
+              InputProps={{
+                startAdornment: <MoneyIcon sx={{ mr: 1 }} />,
+              }}
+              error={!!error && (!formData.rentAmount || formData.rentAmount <= 0)}
+              helperText={!!error && (!formData.rentAmount || formData.rentAmount <= 0) ? "Valid rent amount is required" : ""}
+            />
+            <TextField
+              required
+              fullWidth
+              label="Rent Due Day"
+              name="rentDueDay"
+              type="number"
+              value={formData.rentDueDay}
+              onChange={handleChange}
+              margin="normal"
+              inputProps={{ min: 1, max: 31 }}
+              error={!!error && (!formData.rentDueDay || formData.rentDueDay < 1 || formData.rentDueDay > 31)}
+              helperText={!!error && (!formData.rentDueDay || formData.rentDueDay < 1 || formData.rentDueDay > 31) ? "Rent due day must be between 1 and 31" : ""}
+            />
+          </Box>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 3 }}>
+          <Button onClick={handleClose}>Cancel</Button>
+          <Button 
+            onClick={handleSubmit}
+            variant="contained" 
+            color="primary"
+            disabled={loading}
+          >
+            {loading ? <CircularProgress size={24} /> : 'Add Property'}
+          </Button>
+        </DialogActions>
+      </Dialog>
 
-      {loading ? (
+      {loading && !open ? (
         <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
           <CircularProgress />
         </Box>
@@ -226,7 +332,7 @@ const Apartments = () => {
                         <Box sx={{ display: 'flex', alignItems: 'center' }}>
                           <MoneyIcon sx={{ fontSize: 20, color: 'text.secondary', mr: 1 }} />
                           <Typography variant="body2" color="text.secondary">
-                            ${apartment.rent}/month
+                            ${apartment.rentAmount}/month (Due: Day {apartment.rentDueDay})
                           </Typography>
                         </Box>
                       </Grid>
@@ -234,7 +340,7 @@ const Apartments = () => {
                         <Box sx={{ display: 'flex', alignItems: 'center' }}>
                           <SquareIcon sx={{ fontSize: 20, color: 'text.secondary', mr: 1 }} />
                           <Typography variant="body2" color="text.secondary">
-                            {apartment.squareFeet} sq ft
+                            {apartment.squareFootage} sq ft
                           </Typography>
                         </Box>
                       </Grid>
@@ -289,137 +395,6 @@ const Apartments = () => {
           </Grid>
         </Fade>
       )}
-
-      <Dialog 
-        open={open} 
-        onClose={handleClose}
-        maxWidth="sm"
-        fullWidth
-        PaperProps={{
-          sx: {
-            borderRadius: 2,
-          }
-        }}
-      >
-        <DialogTitle sx={{ pb: 1 }}>
-          <Typography variant="h5" sx={{ fontWeight: 600 }}>
-            Add New Property
-          </Typography>
-        </DialogTitle>
-
-        <DialogContent sx={{ pb: 2 }}>
-          <Box component="form" onSubmit={handleSubmit} sx={{ mt: 2 }}>
-            <Grid container spacing={2}>
-              <Grid item xs={12}>
-                <TextField
-                  name="name"
-                  label="Property Name"
-                  fullWidth
-                  required
-                  value={formData.name}
-                  onChange={handleChange}
-                />
-              </Grid>
-              <Grid item xs={12}>
-                <TextField
-                  name="address"
-                  label="Address"
-                  fullWidth
-                  required
-                  value={formData.address}
-                  onChange={handleChange}
-                />
-              </Grid>
-              <Grid item xs={12} sm={6}>
-                <TextField
-                  name="rent"
-                  label="Monthly Rent"
-                  type="number"
-                  fullWidth
-                  required
-                  value={formData.rent}
-                  onChange={handleChange}
-                  InputProps={{
-                    startAdornment: '$',
-                  }}
-                />
-              </Grid>
-              <Grid item xs={12} sm={6}>
-                <TextField
-                  name="squareFeet"
-                  label="Square Feet"
-                  type="number"
-                  fullWidth
-                  required
-                  value={formData.squareFeet}
-                  onChange={handleChange}
-                />
-              </Grid>
-              <Grid item xs={12} sm={6}>
-                <TextField
-                  name="bedrooms"
-                  label="Bedrooms"
-                  type="number"
-                  fullWidth
-                  required
-                  value={formData.bedrooms}
-                  onChange={handleChange}
-                />
-              </Grid>
-              <Grid item xs={12} sm={6}>
-                <TextField
-                  name="bathrooms"
-                  label="Bathrooms"
-                  type="number"
-                  fullWidth
-                  required
-                  value={formData.bathrooms}
-                  onChange={handleChange}
-                />
-              </Grid>
-              <Grid item xs={12}>
-                <TextField
-                  name="description"
-                  label="Description"
-                  multiline
-                  rows={4}
-                  fullWidth
-                  required
-                  value={formData.description}
-                  onChange={handleChange}
-                />
-              </Grid>
-              <Grid item xs={12}>
-                <TextField
-                  name="status"
-                  label="Status"
-                  select
-                  fullWidth
-                  required
-                  value={formData.status}
-                  onChange={handleChange}
-                >
-                  <MenuItem value="available">Available</MenuItem>
-                  <MenuItem value="rented">Rented</MenuItem>
-                  <MenuItem value="maintenance">Maintenance</MenuItem>
-                </TextField>
-              </Grid>
-            </Grid>
-          </Box>
-        </DialogContent>
-
-        <DialogActions sx={{ px: 3, pb: 3 }}>
-          <Button onClick={handleClose}>Cancel</Button>
-          <Button
-            variant="contained"
-            onClick={handleSubmit}
-            disabled={loading}
-            sx={{ px: 3 }}
-          >
-            {loading ? <CircularProgress size={24} /> : 'Add Property'}
-          </Button>
-        </DialogActions>
-      </Dialog>
     </Box>
   );
 };
