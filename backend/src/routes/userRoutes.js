@@ -3,9 +3,8 @@ const router = express.Router();
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
-const auth = require('../middleware/auth');
+const { auth, authorize } = require('../middleware/auth');
 const { body, validationResult } = require('express-validator');
-const { authorize } = require('../middleware/auth');
 
 // Validation middleware
 const validateRegistration = [
@@ -23,7 +22,7 @@ router.post('/register', validateRegistration, async (req, res) => {
       return res.status(400).json({ errors: errors.array() });
     }
 
-    const { email, password, firstName, lastName, role, phone } = req.body;
+    const { email, password, firstName, lastName, userType, phone } = req.body;
 
     // Check if user already exists
     const existingUser = await User.findOne({ email });
@@ -37,7 +36,7 @@ router.post('/register', validateRegistration, async (req, res) => {
       password,
       firstName,
       lastName,
-      role,
+      userType,
       phone
     });
 
@@ -57,7 +56,7 @@ router.post('/register', validateRegistration, async (req, res) => {
         email: user.email,
         firstName: user.firstName,
         lastName: user.lastName,
-        role: user.role
+        userType: user.userType
       }
     });
   } catch (error) {
@@ -71,13 +70,13 @@ router.post('/login', async (req, res) => {
     const { email, password } = req.body;
 
     // Find user
-    const user = await User.findOne({ email });
+    const user = await User.findOne({ email }).select('+password');
     if (!user) {
       return res.status(401).json({ message: 'Invalid credentials' });
     }
 
     // Check password
-    const isMatch = await user.comparePassword(password);
+    const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
       return res.status(401).json({ message: 'Invalid credentials' });
     }
@@ -89,15 +88,13 @@ router.post('/login', async (req, res) => {
       { expiresIn: '24h' }
     );
 
+    // Remove password from response
+    const userToReturn = user.toObject();
+    delete userToReturn.password;
+
     res.json({
       token,
-      user: {
-        id: user._id,
-        email: user.email,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        role: user.role
-      }
+      user: userToReturn
     });
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
@@ -138,7 +135,7 @@ router.patch('/me', auth, async (req, res) => {
 });
 
 // Owner: Get all tenants
-router.get('/tenants', auth, authorize('owner'), async (req, res) => {
+router.get('/tenants', [auth, authorize('owner')], async (req, res) => {
   try {
     const tenants = await User.find({ userType: 'tenant' }).select('-password');
     res.json(tenants);
@@ -148,7 +145,7 @@ router.get('/tenants', auth, authorize('owner'), async (req, res) => {
 });
 
 // Owner: Get all service providers
-router.get('/service-providers', auth, authorize('owner'), async (req, res) => {
+router.get('/service-providers', [auth, authorize('owner')], async (req, res) => {
   try {
     const serviceProviders = await User.find({ userType: 'serviceProvider' }).select('-password');
     res.json(serviceProviders);

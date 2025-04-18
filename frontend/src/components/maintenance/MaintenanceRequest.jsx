@@ -24,6 +24,7 @@ import {
   InputLabel,
   Select,
   Stack,
+  FormHelperText,
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -34,36 +35,26 @@ import {
   Schedule as ScheduleIcon,
   Home as HomeIcon,
   PhotoCamera as CameraIcon,
-  AttachFile as AttachIcon,
 } from '@mui/icons-material';
-import axios from 'axios';
 import { format } from 'date-fns';
+import api from '../../config/api';
 
 const MaintenanceRequest = () => {
   const [requests, setRequests] = useState([]);
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [successMessage, setSuccessMessage] = useState('');
   const [formData, setFormData] = useState({
     title: '',
+    type: '',
     description: '',
     priority: 'medium',
-    category: '',
-    apartment: '',
+    apartmentId: '',
     images: [],
   });
   const [apartments, setApartments] = useState([]);
   const theme = useTheme();
-
-  const categories = [
-    'Plumbing',
-    'Electrical',
-    'HVAC',
-    'Appliance',
-    'Structural',
-    'Pest Control',
-    'Other',
-  ];
 
   useEffect(() => {
     fetchRequests();
@@ -73,7 +64,7 @@ const MaintenanceRequest = () => {
   const fetchRequests = async () => {
     try {
       setLoading(true);
-      const response = await axios.get('/api/maintenance');
+      const response = await api.get('/api/maintenance');
       setRequests(response.data);
       setError('');
     } catch (err) {
@@ -86,112 +77,150 @@ const MaintenanceRequest = () => {
 
   const fetchApartments = async () => {
     try {
-      const response = await axios.get('/api/apartments');
-      setApartments(response.data);
+      setLoading(true);
+      const userInfo = JSON.parse(localStorage.getItem('user'));
+      
+      if (userInfo?.userType !== 'tenant') {
+        setError('Only tenants can submit maintenance requests.');
+        setApartments([]);
+        return;
+      }
+
+      const response = await api.get('/api/apartments/my-apartment');
+      setApartments([response.data]);
+      setFormData(prev => ({
+        ...prev,
+        apartmentId: response.data._id
+      }));
+      setError('');
     } catch (err) {
-      console.error('Error fetching apartments:', err);
+      if (err.response?.status === 404) {
+        setError('No apartment is currently assigned to you. Please contact your property manager.');
+      } else if (err.response?.status === 401) {
+        setError('Please log in again to view your apartment.');
+      } else if (err.response?.status === 403) {
+        setError('You do not have permission to submit maintenance requests.');
+      } else {
+        setError('Failed to fetch your apartment details. Please try again.');
+      }
+      console.error('Error fetching apartment:', err);
+      setApartments([]);
+    } finally {
+      setLoading(false);
     }
   };
 
   const handleOpen = () => {
     setOpen(true);
+    setError('');
   };
 
   const handleClose = () => {
     setOpen(false);
     setFormData({
       title: '',
+      type: '',
       description: '',
       priority: 'medium',
-      category: '',
-      apartment: '',
+      apartmentId: '',
       images: [],
     });
+    setError('');
   };
 
   const handleChange = (e) => {
     const { name, value, files } = e.target;
     if (name === 'images') {
-      setFormData({
-        ...formData,
+      setFormData(prev => ({
+        ...prev,
         images: Array.from(files),
-      });
+      }));
     } else {
-      setFormData({
-        ...formData,
+      setFormData(prev => ({
+        ...prev,
         [name]: value,
-      });
+      }));
     }
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    
+    // Validate form data
+    if (!formData.title || !formData.type || !formData.description) {
+      setError('Please fill in all required fields');
+      return;
+    }
+
+    if (!formData.apartmentId) {
+      setError('Please select an apartment');
+      return;
+    }
+
+    if (formData.title.length < 5) {
+      setError('Title must be at least 5 characters long');
+      return;
+    }
+
+    if (formData.description.length < 10) {
+      setError('Description must be at least 10 characters long');
+      return;
+    }
+
+    // Validate file types and sizes
+    const maxFileSize = 5 * 1024 * 1024; // 5MB
+    const validImageTypes = ['image/jpeg', 'image/png', 'image/gif'];
+    
+    for (const image of formData.images) {
+      if (!validImageTypes.includes(image.type)) {
+        setError('Only JPEG, PNG, and GIF images are allowed');
+        return;
+      }
+      if (image.size > maxFileSize) {
+        setError('Each image must be less than 5MB');
+        return;
+      }
+    }
+
+    setLoading(true);
     try {
-      setLoading(true);
       const formDataToSend = new FormData();
-      Object.keys(formData).forEach(key => {
-        if (key === 'images') {
-          formData.images.forEach(image => {
-            formDataToSend.append('images', image);
-          });
-        } else {
-          formDataToSend.append(key, formData[key]);
-        }
+      formDataToSend.append('title', formData.title.trim());
+      formDataToSend.append('type', formData.type);
+      formDataToSend.append('description', formData.description.trim());
+      formDataToSend.append('priority', formData.priority);
+      formDataToSend.append('apartment', formData.apartmentId);
+
+      formData.images.forEach(image => {
+        formDataToSend.append('photos', image);
       });
 
-      await axios.post('/api/maintenance', formDataToSend, {
+      const response = await api.post('/api/maintenance', formDataToSend, {
         headers: {
           'Content-Type': 'multipart/form-data',
         },
       });
-      fetchRequests();
+      
+      await fetchRequests();
       handleClose();
+      
+      // Show success message
+      setError('');
+      setSuccessMessage('Maintenance request submitted successfully');
+      setTimeout(() => setSuccessMessage(''), 3000);
     } catch (err) {
-      setError('Failed to submit maintenance request. Please try again.');
+      let errorMessage = 'Failed to submit maintenance request. Please try again.';
+      
+      if (err.response?.data?.message) {
+        errorMessage = err.response.data.message;
+      } else if (err.message === 'Network Error') {
+        errorMessage = 'Unable to connect to server. Please check your internet connection.';
+      }
+      
+      setError(errorMessage);
       console.error('Error submitting request:', err);
     } finally {
       setLoading(false);
-    }
-  };
-
-  const handleDelete = async (id) => {
-    if (window.confirm('Are you sure you want to delete this maintenance request?')) {
-      try {
-        setLoading(true);
-        await axios.delete(`/api/maintenance/${id}`);
-        fetchRequests();
-      } catch (err) {
-        setError('Failed to delete maintenance request. Please try again.');
-        console.error('Error deleting request:', err);
-      } finally {
-        setLoading(false);
-      }
-    }
-  };
-
-  const getPriorityColor = (priority) => {
-    switch (priority.toLowerCase()) {
-      case 'high':
-        return theme.palette.error;
-      case 'medium':
-        return theme.palette.warning;
-      case 'low':
-        return theme.palette.success;
-      default:
-        return theme.palette.info;
-    }
-  };
-
-  const getStatusColor = (status) => {
-    switch (status.toLowerCase()) {
-      case 'pending':
-        return theme.palette.warning;
-      case 'in_progress':
-        return theme.palette.info;
-      case 'completed':
-        return theme.palette.success;
-      default:
-        return theme.palette.error;
     }
   };
 
@@ -225,6 +254,12 @@ const MaintenanceRequest = () => {
         </Alert>
       )}
 
+      {successMessage && (
+        <Alert severity="success" sx={{ mb: 3 }}>
+          {successMessage}
+        </Alert>
+      )}
+
       {loading ? (
         <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
           <CircularProgress />
@@ -232,100 +267,99 @@ const MaintenanceRequest = () => {
       ) : (
         <Fade in={true} timeout={500}>
           <Grid container spacing={3}>
-            {requests.map((request) => (
-              <Grid item xs={12} sm={6} md={4} key={request._id}>
-                <Card 
-                  sx={{ 
-                    height: '100%',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    transition: 'transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out',
-                    '&:hover': {
-                      transform: 'translateY(-4px)',
-                      boxShadow: theme.shadows[4],
-                    },
-                  }}
-                >
-                  <CardContent sx={{ flexGrow: 1 }}>
-                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 2 }}>
-                      <Typography variant="h6" gutterBottom sx={{ fontWeight: 600 }}>
-                        {request.title}
-                      </Typography>
-                      <Stack direction="row" spacing={1}>
-                        <Chip
-                          label={request.priority}
-                          size="small"
-                          sx={{
-                            backgroundColor: getPriorityColor(request.priority).light,
-                            color: getPriorityColor(request.priority).dark,
-                            fontWeight: 500,
-                          }}
-                        />
-                        <Chip
-                          label={request.status}
-                          size="small"
-                          sx={{
-                            backgroundColor: getStatusColor(request.status).light,
-                            color: getStatusColor(request.status).dark,
-                            fontWeight: 500,
-                          }}
-                        />
-                      </Stack>
-                    </Box>
-
-                    <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
-                      <HomeIcon sx={{ fontSize: 20, color: 'text.secondary', mr: 1 }} />
-                      <Typography variant="body2" color="text.secondary">
-                        {request.apartment}
-                      </Typography>
-                    </Box>
-
-                    <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
-                      <BuildIcon sx={{ fontSize: 20, color: 'text.secondary', mr: 1 }} />
-                      <Typography variant="body2" color="text.secondary">
-                        {request.category}
-                      </Typography>
-                    </Box>
-
-                    <Box sx={{ display: 'flex', alignItems: 'flex-start', mb: 2 }}>
-                      <DescriptionIcon sx={{ fontSize: 20, color: 'text.secondary', mr: 1, mt: 0.5 }} />
-                      <Typography variant="body2" color="text.secondary" sx={{ 
-                        display: '-webkit-box',
-                        WebkitLineClamp: 3,
-                        WebkitBoxOrient: 'vertical',
-                        overflow: 'hidden',
-                      }}>
-                        {request.description}
-                      </Typography>
-                    </Box>
-
-                    <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                      <ScheduleIcon sx={{ fontSize: 20, color: 'text.secondary', mr: 1 }} />
-                      <Typography variant="body2" color="text.secondary">
-                        {format(new Date(request.createdAt), 'MMM d, yyyy')}
-                      </Typography>
-                    </Box>
-                  </CardContent>
-
-                  <CardActions sx={{ justifyContent: 'flex-end', p: 2, pt: 0 }}>
-                    <Tooltip title="Edit">
-                      <IconButton size="small" color="primary">
-                        <EditIcon />
-                      </IconButton>
-                    </Tooltip>
-                    <Tooltip title="Delete">
-                      <IconButton 
-                        size="small" 
-                        color="error" 
-                        onClick={() => handleDelete(request._id)}
-                      >
-                        <DeleteIcon />
-                      </IconButton>
-                    </Tooltip>
-                  </CardActions>
-                </Card>
+            {requests.length === 0 ? (
+              <Grid item xs={12}>
+                <Alert severity="info">
+                  No maintenance requests found. Click "New Request" to create one.
+                </Alert>
               </Grid>
-            ))}
+            ) : (
+              requests.map((request) => (
+                <Grid item xs={12} sm={6} md={4} key={request._id}>
+                  <Card 
+                    sx={{ 
+                      height: '100%',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      transition: 'transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out',
+                      '&:hover': {
+                        transform: 'translateY(-4px)',
+                        boxShadow: theme.shadows[4],
+                      },
+                    }}
+                  >
+                    <CardContent sx={{ flexGrow: 1 }}>
+                      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 2 }}>
+                        <Typography variant="h6" gutterBottom sx={{ fontWeight: 600 }}>
+                          {request.title}
+                        </Typography>
+                        <Stack direction="row" spacing={1}>
+                          <Chip
+                            label={request.priority}
+                            size="small"
+                            sx={{
+                              backgroundColor: theme.palette[request.priority === 'high' ? 'error' : request.priority === 'medium' ? 'warning' : 'success'].light,
+                              color: theme.palette[request.priority === 'high' ? 'error' : request.priority === 'medium' ? 'warning' : 'success'].dark,
+                              fontWeight: 500,
+                            }}
+                          />
+                          <Chip
+                            label={request.status}
+                            size="small"
+                            sx={{
+                              backgroundColor: theme.palette[
+                                request.status === 'pending' ? 'warning' : 
+                                request.status === 'in_progress' ? 'info' : 
+                                request.status === 'completed' ? 'success' : 'error'
+                              ].light,
+                              color: theme.palette[
+                                request.status === 'pending' ? 'warning' : 
+                                request.status === 'in_progress' ? 'info' : 
+                                request.status === 'completed' ? 'success' : 'error'
+                              ].dark,
+                              fontWeight: 500,
+                            }}
+                          />
+                        </Stack>
+                      </Box>
+
+                      <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
+                        <HomeIcon sx={{ fontSize: 20, color: 'text.secondary', mr: 1 }} />
+                        <Typography variant="body2" color="text.secondary">
+                          {request.apartment?.apartmentNumber} - {request.apartment?.location}
+                        </Typography>
+                      </Box>
+
+                      <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
+                        <BuildIcon sx={{ fontSize: 20, color: 'text.secondary', mr: 1 }} />
+                        <Typography variant="body2" color="text.secondary">
+                          {request.type}
+                        </Typography>
+                      </Box>
+
+                      <Box sx={{ display: 'flex', alignItems: 'flex-start', mb: 2 }}>
+                        <DescriptionIcon sx={{ fontSize: 20, color: 'text.secondary', mr: 1, mt: 0.5 }} />
+                        <Typography variant="body2" color="text.secondary" sx={{ 
+                          display: '-webkit-box',
+                          WebkitLineClamp: 3,
+                          WebkitBoxOrient: 'vertical',
+                          overflow: 'hidden',
+                        }}>
+                          {request.description}
+                        </Typography>
+                      </Box>
+
+                      <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                        <ScheduleIcon sx={{ fontSize: 20, color: 'text.secondary', mr: 1 }} />
+                        <Typography variant="body2" color="text.secondary">
+                          {format(new Date(request.createdAt), 'MMM d, yyyy')}
+                        </Typography>
+                      </Box>
+                    </CardContent>
+                  </Card>
+                </Grid>
+              ))
+            )}
           </Grid>
         </Fade>
       )}
@@ -365,16 +399,17 @@ const MaintenanceRequest = () => {
                 <FormControl fullWidth required>
                   <InputLabel>Category</InputLabel>
                   <Select
-                    name="category"
-                    value={formData.category}
+                    name="type"
+                    value={formData.type}
                     onChange={handleChange}
                     label="Category"
                   >
-                    {categories.map((category) => (
-                      <MenuItem key={category} value={category}>
-                        {category}
-                      </MenuItem>
-                    ))}
+                    <MenuItem value="plumbing">Plumbing</MenuItem>
+                    <MenuItem value="electrical">Electrical</MenuItem>
+                    <MenuItem value="hvac">HVAC</MenuItem>
+                    <MenuItem value="cleaning">Cleaning</MenuItem>
+                    <MenuItem value="pest control">Pest Control</MenuItem>
+                    <MenuItem value="general">General</MenuItem>
                   </Select>
                 </FormControl>
               </Grid>
@@ -396,20 +431,23 @@ const MaintenanceRequest = () => {
               </Grid>
 
               <Grid item xs={12}>
-                <FormControl fullWidth required>
+                <FormControl fullWidth required error={!!error && !formData.apartmentId}>
                   <InputLabel>Apartment</InputLabel>
                   <Select
-                    name="apartment"
-                    value={formData.apartment}
+                    name="apartmentId"
+                    value={formData.apartmentId}
                     onChange={handleChange}
                     label="Apartment"
                   >
                     {apartments.map((apt) => (
                       <MenuItem key={apt._id} value={apt._id}>
-                        {apt.name}
+                        {`${apt.apartmentNumber} - ${apt.location}`}
                       </MenuItem>
                     ))}
                   </Select>
+                  {!!error && !formData.apartmentId && (
+                    <FormHelperText>Please select an apartment</FormHelperText>
+                  )}
                 </FormControl>
               </Grid>
 

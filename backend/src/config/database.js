@@ -2,6 +2,13 @@ const mongoose = require('mongoose');
 
 const connectDB = async () => {
   try {
+    if (!process.env.MONGODB_URI) {
+      throw new Error('MONGODB_URI is not defined in environment variables');
+    }
+
+    console.log('Attempting to connect to MongoDB...');
+    console.log('Connection URI:', process.env.MONGODB_URI);
+
     const conn = await mongoose.connect(process.env.MONGODB_URI, {
       serverSelectionTimeoutMS: 5000,
       socketTimeoutMS: 45000,
@@ -39,8 +46,11 @@ const connectDB = async () => {
       }
     });
 
+    return conn;
   } catch (error) {
-    console.error('Error connecting to MongoDB:', error);
+    console.error('Error connecting to MongoDB:', error.message);
+    console.error('Please make sure MongoDB is installed and running on your system.');
+    console.error('You can download MongoDB from: https://www.mongodb.com/try/download/community');
     process.exit(1);
   }
 };

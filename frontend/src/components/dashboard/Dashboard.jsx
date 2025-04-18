@@ -34,7 +34,7 @@ import {
 import Apartments from '../apartments/Apartments';
 import MaintenanceRequest from '../maintenance/MaintenanceRequest';
 import WorkOrders from '../service/WorkOrders';
-import axios from 'axios';
+import api from '../../config/api';
 
 const drawerWidth = 280;
 
@@ -51,7 +51,7 @@ const Dashboard = () => {
 
   const fetchNotifications = async () => {
     try {
-      const response = await axios.get('/api/notifications');
+      const response = await api.get('/api/notifications');
       setNotifications(response.data);
     } catch (err) {
       console.error('Error fetching notifications:', err);

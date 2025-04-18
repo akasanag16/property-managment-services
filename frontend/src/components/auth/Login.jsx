@@ -7,9 +7,10 @@ import {
   Container,
   Paper,
   Alert,
+  CircularProgress,
 } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
-import axios from 'axios';
+import api from '../../config/api';
 
 const Login = () => {
   const [formData, setFormData] = useState({
@@ -17,24 +18,61 @@ const Login = () => {
     password: '',
   });
   const [error, setError] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
   const navigate = useNavigate();
+
+  const validateForm = () => {
+    if (!formData.email || !formData.password) {
+      setError('Please fill in all fields');
+      return false;
+    }
+    if (!/^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/.test(formData.email)) {
+      setError('Please enter a valid email address');
+      return false;
+    }
+    return true;
+  };
 
   const handleChange = (e) => {
     setFormData({
       ...formData,
       [e.target.name]: e.target.value,
     });
+    // Clear error when user starts typing
+    if (error) setError('');
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (!validateForm()) return;
+    
+    setIsLoading(true);
+    setError('');
+    
     try {
-      const response = await axios.post('http://localhost:5000/api/auth/login', formData);
-      localStorage.setItem('token', response.data.token);
-      localStorage.setItem('user', JSON.stringify(response.data.user));
-      navigate('/dashboard');
+      console.log('Attempting login with:', { email: formData.email });
+      const response = await api.post('/api/auth/login', formData);
+      console.log('Login response:', response.data);
+      
+      if (response.data?.status === 'success' && response.data?.token) {
+        localStorage.setItem('token', response.data.token);
+        localStorage.setItem('user', JSON.stringify(response.data.user));
+        navigate('/dashboard');
+      } else {
+        setError('Invalid response from server');
+        console.error('Invalid response:', response.data);
+      }
     } catch (err) {
-      setError(err.response?.data?.message || 'An error occurred');
+      console.error('Login error:', err);
+      if (err.message === 'Network Error') {
+        setError('Unable to connect to the server. Please check your internet connection and try again.');
+      } else if (err.response?.data?.message) {
+        setError(err.response.data.message);
+      } else {
+        setError('An unexpected error occurred. Please try again.');
+      }
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -45,7 +83,7 @@ const Login = () => {
           Sign In
         </Typography>
         {error && <Alert severity="error" sx={{ mt: 2, width: '100%' }}>{error}</Alert>}
-        <Box component="form" onSubmit={handleSubmit} sx={{ mt: 1 }}>
+        <Box component="form" onSubmit={handleSubmit} sx={{ mt: 1, width: '100%' }}>
           <TextField
             margin="normal"
             required
@@ -57,6 +95,8 @@ const Login = () => {
             autoFocus
             value={formData.email}
             onChange={handleChange}
+            disabled={isLoading}
+            error={!!error && error.includes('email')}
           />
           <TextField
             margin="normal"
@@ -69,19 +109,23 @@ const Login = () => {
             autoComplete="current-password"
             value={formData.password}
             onChange={handleChange}
+            disabled={isLoading}
+            error={!!error && error.includes('password')}
           />
           <Button
             type="submit"
             fullWidth
             variant="contained"
             sx={{ mt: 3, mb: 2 }}
+            disabled={isLoading}
           >
-            Sign In
+            {isLoading ? <CircularProgress size={24} color="inherit" /> : 'Sign In'}
           </Button>
           <Button
             fullWidth
             variant="text"
             onClick={() => navigate('/register')}
+            disabled={isLoading}
           >
             Don't have an account? Sign Up
           </Button>

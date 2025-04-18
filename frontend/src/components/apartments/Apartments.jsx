@@ -21,6 +21,11 @@ import {
   Tooltip,
   CircularProgress,
   Alert,
+  DialogContentText,
+  FormControl,
+  InputLabel,
+  Select,
+  Stack,
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -32,20 +37,35 @@ import {
   BedOutlined as BedIcon,
   BathtubOutlined as BathIcon,
   Square as SquareIcon,
+  PersonAdd as PersonAddIcon,
+  PersonRemove as PersonRemoveIcon,
+  CalendarToday as CalendarTodayIcon,
+  Person as PersonIcon,
 } from '@mui/icons-material';
 import axios from 'axios';
+import AssignTenant from './AssignTenant';
+import api from '../../config/api';
 
 const Apartments = () => {
   const [apartments, setApartments] = useState([]);
   const [open, setOpen] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [selectedApartment, setSelectedApartment] = useState(null);
   const [formData, setFormData] = useState({
     apartmentNumber: '',
     location: '',
     rentAmount: '',
-    rentDueDay: '1'
+    rentDueDay: 1,
+    status: 'vacant',
+    amenities: '',
+    squareFootage: '',
+    bedrooms: '',
+    bathrooms: '',
   });
+  const [assignTenantOpen, setAssignTenantOpen] = useState(false);
+  const [selectedApartmentForTenant, setSelectedApartmentForTenant] = useState(null);
 
   const theme = useTheme();
 
@@ -56,16 +76,30 @@ const Apartments = () => {
   const fetchApartments = async () => {
     try {
       setLoading(true);
-      const token = localStorage.getItem('token');
-      const response = await axios.get('http://localhost:5000/api/apartments', {
-        headers: {
-          Authorization: `Bearer ${token}`
+      const response = await api.get('/api/apartments');
+      
+      if (response.data.length === 0) {
+        // Check user type from the stored user info
+        const userInfo = JSON.parse(localStorage.getItem('user'));
+        if (userInfo?.userType === 'tenant') {
+          setError('No apartment is currently assigned to you.');
+        } else if (userInfo?.userType === 'owner') {
+          setError('You have no properties listed yet.');
+        } else {
+          setError('No properties found in the system.');
         }
-      });
-      setApartments(response.data);
-      setError('');
+      } else {
+        setApartments(response.data);
+        setError('');
+      }
     } catch (err) {
-      setError('Failed to fetch apartments. Please try again.');
+      if (err.response?.status === 401) {
+        setError('Please log in again to view properties.');
+      } else if (err.response?.status === 403) {
+        setError('You do not have permission to view these properties.');
+      } else {
+        setError('Failed to fetch properties. Please try again.');
+      }
       console.error('Error fetching apartments:', err);
     } finally {
       setLoading(false);
@@ -73,18 +107,22 @@ const Apartments = () => {
   };
 
   const handleOpen = () => {
-    setError('');
     setOpen(true);
+    setError('');
   };
 
   const handleClose = () => {
-    setError('');
     setOpen(false);
     setFormData({
       apartmentNumber: '',
       location: '',
       rentAmount: '',
-      rentDueDay: '1'
+      rentDueDay: 1,
+      status: 'vacant',
+      amenities: '',
+      squareFootage: '',
+      bedrooms: '',
+      bathrooms: '',
     });
   };
 
@@ -92,57 +130,20 @@ const Apartments = () => {
     const { name, value } = e.target;
     setFormData(prev => ({
       ...prev,
-      [name]: value
+      [name]: name === 'rentAmount' || name === 'rentDueDay' ? Number(value) : value,
     }));
-  };
-
-  const validateForm = () => {
-    if (!formData.apartmentNumber.trim()) {
-      setError('Apartment number is required');
-      return false;
-    }
-    if (!formData.location.trim()) {
-      setError('Location is required');
-      return false;
-    }
-    if (!formData.rentAmount || formData.rentAmount <= 0) {
-      setError('Valid rent amount is required');
-      return false;
-    }
-    if (!formData.rentDueDay || formData.rentDueDay < 1 || formData.rentDueDay > 31) {
-      setError('Rent due day must be between 1 and 31');
-      return false;
-    }
-    return true;
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!validateForm()) return;
+    setLoading(true);
 
     try {
-      setLoading(true);
-      setError('');
-      
-      const token = localStorage.getItem('token');
-      const dataToSubmit = {
-        apartmentNumber: formData.apartmentNumber.trim(),
-        location: formData.location.trim(),
-        rentAmount: Number(formData.rentAmount),
-        rentDueDay: Number(formData.rentDueDay)
-      };
-
-      await axios.post('http://localhost:5000/api/apartments', dataToSubmit, {
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
-        }
-      });
-
+      await api.post('/api/apartments', formData);
       await fetchApartments();
       handleClose();
     } catch (err) {
-      const errorMessage = err.response?.data?.message || 'Failed to add apartment. Please try again.';
+      const errorMessage = err.response?.data?.message || 'Failed to add property. Please try again.';
       setError(errorMessage);
       console.error('Error adding apartment:', err);
     } finally {
@@ -150,31 +151,74 @@ const Apartments = () => {
     }
   };
 
-  const handleDelete = async (id) => {
-    if (window.confirm('Are you sure you want to delete this apartment?')) {
-      try {
-        setLoading(true);
-        await axios.delete(`/api/apartments/${id}`);
-        fetchApartments();
-      } catch (err) {
-        setError('Failed to delete apartment. Please try again.');
-        console.error('Error deleting apartment:', err);
-      } finally {
-        setLoading(false);
-      }
+  const handleDeleteClick = (apartment) => {
+    setSelectedApartment(apartment);
+    setDeleteDialogOpen(true);
+  };
+
+  const handleDeleteCancel = () => {
+    setSelectedApartment(null);
+    setDeleteDialogOpen(false);
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!selectedApartment) return;
+
+    try {
+      setLoading(true);
+      setError('');
+      
+      await api.delete(`/api/apartments/${selectedApartment._id}`);
+      await fetchApartments();
+      setDeleteDialogOpen(false);
+      setSelectedApartment(null);
+    } catch (err) {
+      const errorMessage = err.response?.data?.message || 'Failed to delete apartment. Please try again.';
+      setError(errorMessage);
+      console.error('Error deleting apartment:', err);
+    } finally {
+      setLoading(false);
     }
   };
 
   const getStatusColor = (status) => {
     switch (status.toLowerCase()) {
-      case 'available':
-        return theme.palette.success;
-      case 'rented':
-        return theme.palette.warning;
+      case 'vacant':
+        return 'success';
+      case 'occupied':
+        return 'warning';
       case 'maintenance':
-        return theme.palette.error;
+        return 'error';
       default:
-        return theme.palette.info;
+        return 'info';
+    }
+  };
+
+  const handleAssignTenantClick = (apartment) => {
+    setSelectedApartmentForTenant(apartment);
+    setAssignTenantOpen(true);
+  };
+
+  const handleAssignTenantClose = () => {
+    setSelectedApartmentForTenant(null);
+    setAssignTenantOpen(false);
+  };
+
+  const handleAssignTenantSuccess = () => {
+    fetchApartments();
+  };
+
+  const handleRemoveTenant = async (apartment) => {
+    try {
+      setLoading(true);
+      await api.post(`/api/apartments/${apartment._id}/remove-tenant`);
+      await fetchApartments();
+    } catch (err) {
+      const errorMessage = err.response?.data?.message || 'Failed to remove tenant. Please try again.';
+      setError(errorMessage);
+      console.error('Error removing tenant:', err);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -202,73 +246,133 @@ const Apartments = () => {
         </Button>
       </Box>
 
+      {error && (
+        <Alert severity="error" sx={{ mb: 3 }}>
+          {error}
+        </Alert>
+      )}
+
       <Dialog open={open} onClose={handleClose} maxWidth="sm" fullWidth>
         <DialogTitle>Add New Property</DialogTitle>
         <DialogContent>
-          {error && (
-            <Alert severity="error" sx={{ mb: 2, mt: 1 }}>
-              {error}
-            </Alert>
-          )}
           <Box component="form" onSubmit={handleSubmit} sx={{ mt: 2 }}>
-            <TextField
-              required
-              fullWidth
-              label="Apartment Number"
-              name="apartmentNumber"
-              value={formData.apartmentNumber}
-              onChange={handleChange}
-              margin="normal"
-              error={!!error && !formData.apartmentNumber}
-              helperText={!!error && !formData.apartmentNumber ? "Apartment number is required" : ""}
-            />
-            <TextField
-              required
-              fullWidth
-              label="Location"
-              name="location"
-              value={formData.location}
-              onChange={handleChange}
-              margin="normal"
-              error={!!error && !formData.location}
-              helperText={!!error && !formData.location ? "Location is required" : ""}
-            />
-            <TextField
-              required
-              fullWidth
-              label="Rent Amount"
-              name="rentAmount"
-              type="number"
-              value={formData.rentAmount}
-              onChange={handleChange}
-              margin="normal"
-              InputProps={{
-                startAdornment: <MoneyIcon sx={{ mr: 1 }} />,
-              }}
-              error={!!error && (!formData.rentAmount || formData.rentAmount <= 0)}
-              helperText={!!error && (!formData.rentAmount || formData.rentAmount <= 0) ? "Valid rent amount is required" : ""}
-            />
-            <TextField
-              required
-              fullWidth
-              label="Rent Due Day"
-              name="rentDueDay"
-              type="number"
-              value={formData.rentDueDay}
-              onChange={handleChange}
-              margin="normal"
-              inputProps={{ min: 1, max: 31 }}
-              error={!!error && (!formData.rentDueDay || formData.rentDueDay < 1 || formData.rentDueDay > 31)}
-              helperText={!!error && (!formData.rentDueDay || formData.rentDueDay < 1 || formData.rentDueDay > 31) ? "Rent due day must be between 1 and 31" : ""}
-            />
+            <Grid container spacing={2}>
+              <Grid item xs={12} sm={6}>
+                <TextField
+                  name="apartmentNumber"
+                  label="Apartment Number"
+                  fullWidth
+                  required
+                  value={formData.apartmentNumber}
+                  onChange={handleChange}
+                />
+              </Grid>
+              <Grid item xs={12} sm={6}>
+                <TextField
+                  name="location"
+                  label="Location"
+                  fullWidth
+                  required
+                  value={formData.location}
+                  onChange={handleChange}
+                />
+              </Grid>
+              <Grid item xs={12} sm={6}>
+                <TextField
+                  name="rentAmount"
+                  label="Monthly Rent"
+                  type="number"
+                  fullWidth
+                  required
+                  value={formData.rentAmount}
+                  onChange={handleChange}
+                  InputProps={{
+                    startAdornment: '$',
+                  }}
+                />
+              </Grid>
+              <Grid item xs={12} sm={6}>
+                <TextField
+                  name="rentDueDay"
+                  label="Rent Due Day"
+                  type="number"
+                  fullWidth
+                  required
+                  value={formData.rentDueDay}
+                  onChange={handleChange}
+                  inputProps={{
+                    min: 1,
+                    max: 31,
+                  }}
+                />
+              </Grid>
+              <Grid item xs={12}>
+                <FormControl fullWidth required>
+                  <InputLabel>Status</InputLabel>
+                  <Select
+                    name="status"
+                    value={formData.status}
+                    onChange={handleChange}
+                    label="Status"
+                  >
+                    <MenuItem value="vacant">Vacant</MenuItem>
+                    <MenuItem value="occupied">Occupied</MenuItem>
+                  </Select>
+                </FormControl>
+              </Grid>
+              <Grid item xs={12}>
+                <TextField
+                  name="amenities"
+                  label="Amenities"
+                  fullWidth
+                  multiline
+                  rows={2}
+                  value={formData.amenities}
+                  onChange={handleChange}
+                  placeholder="List amenities separated by commas"
+                />
+              </Grid>
+              <Grid item xs={12} sm={4}>
+                <TextField
+                  name="squareFootage"
+                  label="Square Footage"
+                  type="number"
+                  fullWidth
+                  required
+                  value={formData.squareFootage}
+                  onChange={handleChange}
+                />
+              </Grid>
+              <Grid item xs={12} sm={4}>
+                <TextField
+                  name="bedrooms"
+                  label="Bedrooms"
+                  type="number"
+                  fullWidth
+                  required
+                  value={formData.bedrooms}
+                  onChange={handleChange}
+                />
+              </Grid>
+              <Grid item xs={12} sm={4}>
+                <TextField
+                  name="bathrooms"
+                  label="Bathrooms"
+                  type="number"
+                  fullWidth
+                  required
+                  value={formData.bathrooms}
+                  onChange={handleChange}
+                />
+              </Grid>
+            </Grid>
           </Box>
         </DialogContent>
-        <DialogActions sx={{ px: 3, pb: 3 }}>
+        <DialogActions>
           <Button onClick={handleClose}>Cancel</Button>
           <Button 
-            onClick={handleSubmit}
             variant="contained" 
-            color="primary"
+            onClick={handleSubmit}
             disabled={loading}
           >
             {loading ? <CircularProgress size={24} /> : 'Add Property'}
@@ -276,7 +380,34 @@ const Apartments = () => {
         </DialogActions>
       </Dialog>
 
-      {loading && !open ? (
+      <Dialog
+        open={deleteDialogOpen}
+        onClose={handleDeleteCancel}
+        aria-labelledby="delete-dialog-title"
+        aria-describedby="delete-dialog-description"
+      >
+        <DialogTitle id="delete-dialog-title">
+          Delete Property
+        </DialogTitle>
+        <DialogContent>
+          <DialogContentText id="delete-dialog-description">
+            Are you sure you want to delete apartment {selectedApartment?.apartmentNumber}? This action cannot be undone.
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleDeleteCancel}>Cancel</Button>
+          <Button 
+            onClick={handleDeleteConfirm} 
+            color="error" 
+            variant="contained"
+            disabled={loading}
+          >
+            {loading ? <CircularProgress size={24} /> : 'Delete'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {loading ? (
         <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
           <CircularProgress />
         </Box>
@@ -307,59 +438,78 @@ const Apartments = () => {
                   <CardContent sx={{ flexGrow: 1 }}>
                     <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 2 }}>
                       <Typography variant="h6" gutterBottom sx={{ fontWeight: 600 }}>
-                        {apartment.name}
+                        {apartment.apartmentNumber}
                       </Typography>
                       <Chip
                         label={apartment.status}
                         size="small"
-                        sx={{
-                          backgroundColor: getStatusColor(apartment.status).light,
-                          color: getStatusColor(apartment.status).dark,
-                          fontWeight: 500,
-                        }}
+                        color={getStatusColor(apartment.status)}
                       />
                     </Box>
 
                     <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
                       <LocationIcon sx={{ fontSize: 20, color: 'text.secondary', mr: 1 }} />
                       <Typography variant="body2" color="text.secondary">
-                        {apartment.address}
+                        {apartment.location}
                       </Typography>
                     </Box>
+
+                    {apartment.currentTenant && (
+                      <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
+                        <PersonIcon sx={{ fontSize: 20, color: 'text.secondary', mr: 1 }} />
+                        <Typography variant="body2" color="text.secondary">
+                          Tenant: {apartment.currentTenant.name} ({apartment.currentTenant.email})
+                        </Typography>
+                      </Box>
+                    )}
 
                     <Grid container spacing={2} sx={{ mb: 2 }}>
                       <Grid item xs={6}>
                         <Box sx={{ display: 'flex', alignItems: 'center' }}>
                           <MoneyIcon sx={{ fontSize: 20, color: 'text.secondary', mr: 1 }} />
                           <Typography variant="body2" color="text.secondary">
-                            ${apartment.rentAmount}/month (Due: Day {apartment.rentDueDay})
+                            ${apartment.rentAmount}/month
                           </Typography>
                         </Box>
                       </Grid>
                       <Grid item xs={6}>
                         <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                          <SquareIcon sx={{ fontSize: 20, color: 'text.secondary', mr: 1 }} />
+                          <CalendarTodayIcon sx={{ fontSize: 20, color: 'text.secondary', mr: 1 }} />
                           <Typography variant="body2" color="text.secondary">
-                            {apartment.squareFootage} sq ft
+                            Due: Day {apartment.rentDueDay}
                           </Typography>
                         </Box>
                       </Grid>
-                      <Grid item xs={6}>
-                        <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                          <BedIcon sx={{ fontSize: 20, color: 'text.secondary', mr: 1 }} />
-                          <Typography variant="body2" color="text.secondary">
-                            {apartment.bedrooms} Beds
-                          </Typography>
-                        </Box>
-                      </Grid>
-                      <Grid item xs={6}>
-                        <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                          <BathIcon sx={{ fontSize: 20, color: 'text.secondary', mr: 1 }} />
-                          <Typography variant="body2" color="text.secondary">
-                            {apartment.bathrooms} Baths
-                          </Typography>
-                        </Box>
-                      </Grid>
+                      {apartment.squareFootage && (
+                        <Grid item xs={6}>
+                          <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                            <SquareIcon sx={{ fontSize: 20, color: 'text.secondary', mr: 1 }} />
+                            <Typography variant="body2" color="text.secondary">
+                              {apartment.squareFootage} sq ft
+                            </Typography>
+                          </Box>
+                        </Grid>
+                      )}
+                      {apartment.bedrooms && (
+                        <Grid item xs={6}>
+                          <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                            <BedIcon sx={{ fontSize: 20, color: 'text.secondary', mr: 1 }} />
+                            <Typography variant="body2" color="text.secondary">
+                              {apartment.bedrooms} Beds
+                            </Typography>
+                          </Box>
+                        </Grid>
+                      )}
+                      {apartment.bathrooms && (
+                        <Grid item xs={6}>
+                          <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                            <BathIcon sx={{ fontSize: 20, color: 'text.secondary', mr: 1 }} />
+                            <Typography variant="body2" color="text.secondary">
+                              {apartment.bathrooms} Baths
+                            </Typography>
+                          </Box>
+                        </Grid>
+                      )}
                     </Grid>
 
                     <Typography variant="body2" color="text.secondary" sx={{ 
@@ -379,11 +529,22 @@ const Apartments = () => {
                         <EditIcon />
                       </IconButton>
                     </Tooltip>
+                    <Tooltip title={apartment.status === 'occupied' ? 'Remove Tenant' : 'Assign Tenant'}>
+                      <IconButton
+                        size="small"
+                        color="primary"
+                        onClick={() => apartment.status === 'occupied' 
+                          ? handleRemoveTenant(apartment) 
+                          : handleAssignTenantClick(apartment)}
+                      >
+                        {apartment.status === 'occupied' ? <PersonRemoveIcon /> : <PersonAddIcon />}
+                      </IconButton>
+                    </Tooltip>
                     <Tooltip title="Delete">
                       <IconButton 
                         size="small" 
                         color="error" 
-                        onClick={() => handleDelete(apartment._id)}
+                        onClick={() => handleDeleteClick(apartment)}
                       >
                         <DeleteIcon />
                       </IconButton>
@@ -395,6 +556,13 @@ const Apartments = () => {
           </Grid>
         </Fade>
       )}
+
+      <AssignTenant
+        open={assignTenantOpen}
+        onClose={handleAssignTenantClose}
+        apartmentId={selectedApartmentForTenant?._id}
+        onSuccess={handleAssignTenantSuccess}
+      />
     </Box>
   );
 };

@@ -43,37 +43,57 @@ const upload = multer({
   }
 });
 
-// Create new maintenance request with photos
+// Create maintenance request
 router.post('/', auth, authorize('tenant'), upload.array('photos', 5), async (req, res) => {
   try {
-    const { apartmentId, type, description, priority } = req.body;
-    
-    // Create the maintenance request
+    const { title, type, description, priority, apartment } = req.body;
+
+    // Validate required fields
+    if (!title || !type || !description || !apartment) {
+      return res.status(400).json({ message: 'Missing required fields' });
+    }
+
+    // Verify apartment belongs to tenant
+    const apartmentDoc = await Apartment.findOne({
+      _id: apartment,
+      currentTenant: req.user._id
+    });
+
+    if (!apartmentDoc) {
+      return res.status(403).json({ message: 'You can only create maintenance requests for your assigned apartment' });
+    }
+
+    // Create maintenance request
     const request = new MaintenanceRequest({
-      apartment: apartmentId,
-      tenant: req.user._id,
+      title,
       type,
       description,
-      priority,
+      priority: priority || 'medium',
+      apartment: apartmentDoc._id,
+      tenant: req.user._id,
+      owner: apartmentDoc.owner,
       status: 'pending'
     });
 
-    // Add uploaded photos
+    // Add photos if any were uploaded
     if (req.files && req.files.length > 0) {
-      request.issuePhotos = req.files.map(file => ({
-        url: `/api/maintenance/photos/${file.filename}`,
-        uploadedAt: new Date()
+      request.photos = req.files.map(file => ({
+        filename: file.filename,
+        path: file.path
       }));
     }
 
     await request.save();
 
-    // Populate response with tenant and apartment details
-    await request.populate('tenant', 'name email phone');
-    await request.populate('apartment', 'apartmentNumber location');
+    // Populate response data
+    await request.populate([
+      { path: 'tenant', select: 'name email phone' },
+      { path: 'apartment', select: 'apartmentNumber location' }
+    ]);
 
     res.status(201).json(request);
   } catch (error) {
+    console.error('Error creating maintenance request:', error);
     res.status(500).json({ message: 'Error creating maintenance request', error: error.message });
   }
 });
@@ -92,32 +112,55 @@ router.get('/photos/:filename', (req, res) => {
   }
 });
 
-// Get all maintenance requests (filtered by user type)
-router.get('/', async (req, res) => {
+// Get maintenance requests
+router.get('/', auth, async (req, res) => {
   try {
     let query = {};
     
     // Filter based on user type
     if (req.user.userType === 'tenant') {
       query.tenant = req.user._id;
+    } else if (req.user.userType === 'owner') {
+      query.owner = req.user._id;
     } else if (req.user.userType === 'serviceProvider') {
-      query.serviceProvider = req.user._id;
+      // For service providers, show assigned requests and available requests
+      query.$or = [
+        { serviceProvider: req.user._id },
+        { serviceProvider: { $exists: false }, status: 'pending' }
+      ];
     }
-    // Owner can see all requests
 
     // Add status filter if provided
     if (req.query.status) {
-      query.status = req.query.status;
+      if (req.user.userType === 'serviceProvider') {
+        // For service providers, handle special status filters
+        if (req.query.status === 'active') {
+          query.status = 'in_progress';
+          query.serviceProvider = req.user._id;
+        } else if (req.query.status === 'completed') {
+          query.status = 'completed';
+          query.serviceProvider = req.user._id;
+        }
+      } else {
+        query.status = req.query.status;
+      }
     }
 
+    console.log('Fetching maintenance requests with query:', query);
+    console.log('User type:', req.user.userType);
+    console.log('User ID:', req.user._id);
+
     const requests = await MaintenanceRequest.find(query)
-      .populate('apartment')
+      .populate('apartment', 'apartmentNumber location')
       .populate('tenant', 'name email phone')
-      .populate('serviceProvider', 'name companyName phone')
+      .populate('owner', 'name email phone')
+      .populate('serviceProvider', 'name email phone companyName')
       .sort({ createdAt: -1 });
 
+    console.log('Found requests:', requests.length);
     res.json(requests);
   } catch (error) {
+    console.error('Error fetching maintenance requests:', error);
     res.status(500).json({ message: 'Error fetching maintenance requests', error: error.message });
   }
 });
